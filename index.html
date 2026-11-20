@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>College Bus Campus</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#eef3f9;color:#172b45}header{background:#123c67;color:white;padding:22px 12px;text-align:center}header h2{margin:0 0 7px}.container{max-width:680px;margin:20px auto;padding:15px}.card{background:white;padding:20px;border-radius:13px;box-shadow:0 3px 12px #0001;margin-bottom:16px}h3{color:#164b78}input,select,button{width:100%;padding:12px;margin:7px 0;border:1px solid #ccd5df;border-radius:7px;font-size:15px}button{background:#14558b;color:white;border:0;font-weight:bold;cursor:pointer}button.secondary{background:#687789}button.danger{background:#b83232}.hidden{display:none}#map{height:380px;width:100%;border-radius:10px}#message{font-weight:bold;margin:12px 0;color:#14558b;overflow-wrap:anywhere}small{color:#667}.note{font-size:13px;color:#566} .bus-item{padding:10px;border:1px solid #dbe3eb;border-radius:8px;margin:8px 0}
+</style>
+</head>
+<body>
+<header><h2>WELCOME TO COLLEGE BUS CAMPUS</h2><p>Smart College Bus Tracking System</p></header>
+<div class="container">
+<div class="card" id="home"><h3>Welcome!</h3><p>Register a new account or login to continue.</p><button onclick="showPage('register')">Register</button><button class="secondary" onclick="showPage('login')">Login</button></div>
+<div class="card hidden" id="register"><h3>Create Your Account</h3>
+<select id="regRole" onchange="roleFields()"><option value="">Select Your Role</option><option value="student">Student</option><option value="parent">Parent</option><option value="driver">Driver</option><option value="admin">Admin</option></select>
+<input id="name" placeholder="Full Name"><input id="email" type="email" placeholder="Email Address"><input id="mobile" type="tel" placeholder="10-digit Mobile Number"><input id="password" type="password" placeholder="Create Password (minimum 6 characters)"><div id="extraFields"></div>
+<button onclick="register()">Register Now</button><button class="secondary" onclick="showPage('login')">Already Registered? Login</button><p class="note">Admin registration should only be used by an authorized college administrator. The demo passkey below is not secure for public deployment.</p></div>
+<div class="card hidden" id="login"><h3>Login to Your Account</h3><select id="loginRole"><option value="">Select Your Role</option><option value="student">Student Login</option><option value="parent">Parent Login</option><option value="driver">Driver Login</option><option value="admin">Admin Login</option></select><input id="loginEmail" type="email" placeholder="Email Address"><input id="loginPassword" type="password" placeholder="Password"><button onclick="login()">Login</button><button class="secondary" onclick="forgotPassword()">Forgot Password?</button><button class="secondary" onclick="showPage('register')">Create New Account</button></div>
+<div class="card hidden" id="dashboard"><h3 id="welcome"></h3><p id="profileInfo"></p>
+<div id="driverPanel" class="hidden"><h3>Driver GPS Tracking</h3><p>Allow location permission and keep this page open while sharing location.</p><button onclick="startTracking()">Start Bus Tracking</button><button class="danger" onclick="stopTracking()">Stop Tracking</button><p id="gpsStatus"></p></div>
+<div id="passengerPanel" class="hidden"><h3>Track Your College Bus</h3><input id="trackBus" placeholder="Enter Bus Number"><button onclick="trackBusNow()">Track Bus</button><p id="busStatus"></p></div>
+<div id="adminPanel" class="hidden"><h3>Admin Dashboard</h3><button onclick="showAllBuses()">Refresh All Bus Locations</button><div id="busList"></div></div>
+<h3>Live Bus Map</h3><p>Ambegaon – Junnar, Maharashtra</p><div id="map"></div><button class="secondary" onclick="logout()">Logout</button></div>
+<p id="message"></p></div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// YOUR FIREBASE WEB APP CONFIGURATION
+const firebaseConfig = {
+  apiKey: "AIzaSyCpJPs1mWHD9KETKi1HzPYYSdpttLCpuBE",
+  authDomain: "college-bus-campus.firebaseapp.com",
+  databaseURL: "https://college-bus-campus-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "college-bus-campus",
+  storageBucket: "college-bus-campus.firebasestorage.app",
+  messagingSenderId: "25732446668",
+  appId: "1:25732446668:web:7b1c5917862be3c348c569",
+  measurementId: "G-4MHR8XRNS6"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth();
+const db=firebase.database();
+let profile=null,map=null,markers={},gpsWatch=null,busListener=null,allBusesListener=null,trackedBus=null;
+const $=id=>document.getElementById(id);
+function message(t){$('message').innerText=t||''}
+function showPage(page){['home','register','login','dashboard'].forEach(id=>$(id).classList.add('hidden'));$(page).classList.remove('hidden');message('')}
+function roleFields(){const r=$('regRole').value;let h='';
+ if(r==='student')h='<input id="department" placeholder="Department"><input id="route" placeholder="Bus Route"><input id="busStop" placeholder="Your Bus Stop"><input id="busNo" placeholder="Bus Number">';
+ if(r==='parent')h='<input id="child" placeholder="Child Name"><input id="busNo" placeholder="Child Bus Number">';
+ if(r==='driver')h='<input id="route" placeholder="Bus Starting Route"><input id="busNo" placeholder="Bus Number">';
+ if(r==='admin')h='<input id="college" placeholder="College Name"><input id="adminRole" placeholder="College Role"><input id="passkey" type="password" placeholder="Admin Passkey">';
+ $('extraFields').innerHTML=h;
+}
+function getVal(id){return $(id)?$(id).value.trim():''}
+async function register(){try{
+ const role=getVal('regRole'),name=getVal('name'),email=getVal('email').toLowerCase(),mobile=getVal('mobile'),password=$('password').value;
+ if(!role||!name||!email||!mobile||!password)throw Error('Please fill all required fields.');
+ if(!/^[0-9]{10}$/.test(mobile))throw Error('Enter a valid 10-digit mobile number.');
+ if(password.length<6)throw Error('Password must have at least 6 characters.');
+ if(role==='admin'&&getVal('passkey')!=='COLLEGE@123')throw Error('Incorrect demo admin passkey.');
+ const data={name,email,mobile,role,createdAt:firebase.database.ServerValue.TIMESTAMP};
+ if(role==='student')Object.assign(data,{department:getVal('department'),route:getVal('route'),busStop:getVal('busStop'),busNo:getVal('busNo')});
+ if(role==='parent')Object.assign(data,{child:getVal('child'),busNo:getVal('busNo')});
+ if(role==='driver')Object.assign(data,{route:getVal('route'),busNo:getVal('busNo')});
+ if(role==='admin')Object.assign(data,{college:getVal('college'),adminRole:getVal('adminRole')});
+ if(Object.entries(data).some(([k,v])=>['department','route','busStop','busNo','child','college','adminRole'].includes(k)&&!v))throw Error('Please complete all role-specific fields.');
+ const cred=await auth.createUserWithEmailAndPassword(email,password);
+ await db.ref('users/'+cred.user.uid).set(data);
+ await auth.signOut();$('loginEmail').value=email;$('loginRole').value=role;showPage('login');message('Registration successful. Please log in.');
+ }catch(e){message(friendlyError(e));}}
+async function login(){try{const email=getVal('loginEmail').toLowerCase(),password=$('loginPassword').value,role=getVal('loginRole');if(!email||!password||!role)throw Error('Enter email, password and role.');const cred=await auth.signInWithEmailAndPassword(email,password);const snap=await db.ref('users/'+cred.user.uid).once('value');if(!snap.exists()){await auth.signOut();throw Error('Profile not found. Please register again or contact the administrator.');}profile={...snap.val(),uid:cred.user.uid};if(profile.role!==role){await auth.signOut();profile=null;throw Error('Selected role does not match this account.');}openDashboard();}catch(e){message(friendlyError(e));}}
+async function forgotPassword(){const email=getVal('loginEmail').toLowerCase();if(!email){message('Enter your registered email first.');return;}try{await auth.sendPasswordResetEmail(email);message('Password reset email sent. Check your inbox and spam folder.');}catch(e){message(friendlyError(e));}}
+function friendlyError(e){const c=e&&e.code;if(c==='auth/api-key-not-valid.-please-pass-a-valid-api-key.'||c==='auth/invalid-api-key')return 'Firebase says the API key is invalid. Recheck the Web App config and API key restrictions.';if(c==='auth/operation-not-allowed')return 'Enable Email/Password in Firebase Authentication → Sign-in method.';if(c==='auth/unauthorized-domain')return 'Add this website domain in Firebase Authentication → Settings → Authorized domains. Use HTTPS hosting.';if(c==='auth/email-already-in-use')return 'This email is already registered. Please log in.';if(c==='auth/weak-password')return 'Choose a password with at least 6 characters.';if(c==='auth/invalid-credential'||c==='auth/wrong-password'||c==='auth/user-not-found')return 'Incorrect email or password.';if(c==='PERMISSION_DENIED'||(e&&String(e.message).includes('permission_denied')))return 'Firebase Database permission denied. Check Realtime Database Rules.';return (e&&e.message)||'Something went wrong. Check your internet and Firebase settings.';}
+function openDashboard(){showPage('dashboard');$('welcome').innerText='Welcome '+profile.name+' ('+profile.role+')';let d='Email: '+profile.email+' | Mobile: '+profile.mobile;if(profile.role==='student')d+=' | Department: '+profile.department+' | Route: '+profile.route+' | Stop: '+profile.busStop+' | Bus: '+profile.busNo;if(profile.role==='parent')d+=' | Child: '+profile.child+' | Bus: '+profile.busNo;if(profile.role==='driver')d+=' | Route: '+profile.route+' | Bus: '+profile.busNo;if(profile.role==='admin')d+=' | College: '+profile.college+' | Role: '+profile.adminRole;$('profileInfo').innerText=d;['driverPanel','passengerPanel','adminPanel'].forEach(x=>$(x).classList.add('hidden'));if(profile.role==='driver')$('driverPanel').classList.remove('hidden');if(['student','parent'].includes(profile.role)){$('passengerPanel').classList.remove('hidden');$('trackBus').value=profile.busNo||'';}if(profile.role==='admin')$('adminPanel').classList.remove('hidden');setTimeout(()=>{initMap();if(profile.role==='admin')showAllBuses();},350);}
+function initMap(){if(!window.L){message('Map could not load. Check internet.');return;}if(map){map.invalidateSize();return;}map=L.map('map').setView([19.15,73.95],10);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors'}).addTo(map);L.marker([19.15,73.95]).addTo(map).bindPopup('Ambegaon – Junnar Region');}
+function putBusMarker(bus){if(!map||!bus||typeof bus.latitude!=='number'||typeof bus.longitude!=='number')return;const id=String(bus.busNo);if(markers[id])markers[id].setLatLng([bus.latitude,bus.longitude]);else markers[id]=L.marker([bus.latitude,bus.longitude]).addTo(map);markers[id].bindPopup('Bus '+id+' | '+(bus.status||'Unknown'));map.setView([bus.latitude,bus.longitude],14);}
+function startTracking(){if(!navigator.geolocation){message('GPS is not supported by this browser.');return;}if(!profile||!profile.busNo){message('Bus number is missing from your driver profile.');return;}if(gpsWatch!==null)return;$('gpsStatus').innerText='Waiting for GPS permission and location...';gpsWatch=navigator.geolocation.watchPosition(async p=>{const bus={busNo:String(profile.busNo),driver:profile.name,driverUid:profile.uid,route:profile.route||'',latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,updatedAt:firebase.database.ServerValue.TIMESTAMP,status:'Running'};try{await db.ref('buses/'+safeKey(profile.busNo)).set(bus);$('gpsStatus').innerText='Live location shared successfully.';putBusMarker({...bus,updatedAt:Date.now()});}catch(e){$('gpsStatus').innerText=friendlyError(e);}},e=>{$('gpsStatus').innerText='GPS error: '+e.message;gpsWatch=null;},{enableHighAccuracy:true,maximumAge:3000,timeout:20000});}
+function safeKey(s){return String(s).replace(/[.#$\[\]\/]/g,'_')}
+async function stopTracking(){if(gpsWatch!==null){navigator.geolocation.clearWatch(gpsWatch);gpsWatch=null;}if(profile&&profile.busNo){try{await db.ref('buses/'+safeKey(profile.busNo)+'/status').set('Stopped');await db.ref('buses/'+safeKey(profile.busNo)+'/updatedAt').set(firebase.database.ServerValue.TIMESTAMP);}catch(e){message(friendlyError(e));}}$('gpsStatus').innerText='GPS sharing stopped.';}
+function trackBusNow(){const n=getVal('trackBus');if(!n){message('Enter bus number.');return;}if(busListener){busListener.off();busListener=null;}trackedBus=n;const ref=db.ref('buses/'+safeKey(n));busListener=ref;ref.on('value',snap=>{const b=snap.val();if(!b){$('busStatus').innerText='Bus location not available yet.';return;}putBusMarker(b);$('busStatus').innerText='Bus: '+b.busNo+' | Status: '+b.status+' | Last updated: '+(b.updatedAt?new Date(b.updatedAt).toLocaleTimeString():'recently');},e=>message(friendlyError(e)));}
+function showAllBuses(){if(allBusesListener){allBusesListener.off();allBusesListener=null;}const ref=db.ref('buses');allBusesListener=ref;ref.on('value',snap=>{const box=$('busList');box.innerHTML='';const data=snap.val()||{};const entries=Object.values(data);if(!entries.length){box.innerText='No buses available.';return;}entries.forEach(b=>{const div=document.createElement('div');div.className='bus-item';const title=document.createElement('strong');title.innerText='Bus '+b.busNo+' — '+(b.route||'Route not set')+' — '+(b.status||'Unknown');const btn=document.createElement('button');btn.className='secondary';btn.innerText='Show on map';btn.onclick=()=>putBusMarker(b);div.append(title,btn);box.appendChild(div);});},e=>message(friendlyError(e)));}
+async function logout(){if(gpsWatch!==null)await stopTracking();if(busListener){busListener.off();busListener=null;}if(allBusesListener){allBusesListener.off();allBusesListener=null;}Object.values(markers).forEach(m=>map&&map.removeLayer(m));markers={};if(map){map.remove();map=null;}profile=null;trackedBus=null;try{await auth.signOut();}catch(e){}showPage('home');}
+auth.onAuthStateChanged(async user=>{if(user&&!profile){try{const s=await db.ref('users/'+user.uid).once('value');if(s.exists()){profile={...s.val(),uid:user.uid};openDashboard();}}catch(e){message(friendlyError(e));}}});
+showPage('home');
+</script>
+</body>
+</html>
